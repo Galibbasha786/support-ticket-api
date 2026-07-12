@@ -1,122 +1,168 @@
-import time
+#import time  -- not being used
 from sqlalchemy.orm import Session
 
-from app.config import settings
+#from app.config import settings.  --- its not  being used
 from app.models import Ticket, Queue
 from app.schemas import TicketBulkEntry, TicketCreate, TicketCreateStandalone
 
 # remived validation here as it is done in add_ticket_to_queue as check is like below 10 caoacity exceeded
 
 def create_ticket(db: Session, data: TicketCreateStandalone) -> Ticket:
+
+    # If queue_id is provided, attach the ticket to that queue
     if data.queue_id:
-        queue = db.query(Queue).filter(Queue.id == data.queue_id).first()
+
+        # OPTIMIZATION:
+        # db.get() is faster and cleaner than query().filter().first()
+        # when fetching by Primary Key.
+        queue = db.get(Queue, data.queue_id)
 
         if not queue:
             raise ValueError("queue_not_found")
 
-        # Total quantity after adding this ticket
+        # Calculate future ticket count once
         total_tickets = queue.current_ticket_count + data.quantity
 
-        # Do not allow exceeding queue capacity
+        # Business Rule:
+        # Do not allow queue capacity to be exceeded.
         if total_tickets > queue.capacity:
             raise ValueError("capacity_exceeded")
 
         ticket = Ticket(
             title=data.title,
             complexity=data.complexity,
-            queue_id=data.queue_id,
             quantity=data.quantity,
+            queue_id=data.queue_id,
         )
 
         db.add(ticket)
 
-        # Update queue ticket count
+        # Keep queue statistics synchronized
         queue.current_ticket_count += data.quantity
 
     else:
+        # Standalone ticket (not attached to any queue)
         ticket = Ticket(
             title=data.title,
             complexity=data.complexity,
-            queue_id=None,
             quantity=data.quantity,
+            queue_id=None,
         )
 
         db.add(ticket)
 
-    db.commit()
-    db.refresh(ticket)
+    # OPTIMIZATION:
+    # Rollback keeps SQLAlchemy session usable
+    # if commit fails.
+    try:
+        db.commit()
+        db.refresh(ticket)
+    except Exception:
+        db.rollback()
+        raise
+  
 
     return ticket
 
 
-def add_ticket_to_queue(db: Session, queue_id: str, data: TicketCreate) -> Ticket:
 
-    queue = db.query(Queue).filter(Queue.id == queue_id).first()
+def add_ticket_to_queue(
+    db: Session,
+    queue_id: str,
+    data: TicketCreate,
+) -> Ticket:
+
+    # Faster primary key lookup
+    queue = db.get(Queue, queue_id)
 
     if not queue:
         raise ValueError("queue_not_found")
 
     total_tickets = queue.current_ticket_count + data.quantity
 
-    # Queue capacity validation
+    # Capacity Validation
     if total_tickets > queue.capacity:
         raise ValueError("capacity_exceeded")
 
     ticket = Ticket(
         title=data.title,
         complexity=data.complexity,
-        queue_id=queue_id,
         quantity=data.quantity,
+        queue_id=queue_id,
     )
 
     db.add(ticket)
 
-    # Increase ticket count
+    # Update queue statistics
     queue.current_ticket_count += data.quantity
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(ticket)
 
     return ticket
 
-def bulk_add_tickets(db: Session, queue_id: str, entries: list[TicketBulkEntry]) -> int:
+def bulk_add_tickets(
+    db: Session,
+    queue_id: str,
+    entries: list[TicketBulkEntry],
+) -> int:
 
-    queue = db.query(Queue).filter(Queue.id == queue_id).first()
+    queue = db.get(Queue, queue_id)
 
     if not queue:
         raise ValueError("queue_not_found")
 
-    added = 0
+    # Calculate total quantity once
+    total_quantity = sum(
+        entry.quantity
+        for entry in entries
+        if entry.quantity > 0
+    )
 
-    total_quantity = sum(e.quantity for e in entries if e.quantity > 0)
-
-    # Check capacity BEFORE inserting anything
+    # Validate before inserting anything
     if queue.current_ticket_count + total_quantity > queue.capacity:
         raise ValueError("capacity_exceeded")
 
-    for e in entries:
+    added = 0
 
-        if e.quantity <= 0:
+    # OPTIMIZATION:
+    # Store all Ticket objects first,
+    # then add them together.
+    tickets: list[Ticket] = []
+
+    for entry in entries:
+
+        if entry.quantity <= 0:
             continue
 
         ticket = Ticket(
-            title=e.title,
-            complexity=e.complexity,
+            title=entry.title,
+            complexity=entry.complexity,
+            quantity=entry.quantity,
             queue_id=queue_id,
-            quantity=e.quantity,
         )
 
-        db.add(ticket)
+        tickets.append(ticket)
 
-        queue.current_ticket_count += e.quantity
+        queue.current_ticket_count += entry.quantity
 
         added += 1
 
-    # Commit everything once
-    db.commit()
+    # More efficient than multiple db.add()
+    db.add_all(tickets)
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
 
     return added
-
 
 def list_tickets_by_queue(db: Session, queue_id: str) -> list[Ticket]:
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
