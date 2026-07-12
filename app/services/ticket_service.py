@@ -5,6 +5,7 @@ from app.config import settings
 from app.models import Ticket, Queue
 from app.schemas import TicketBulkEntry, TicketCreate, TicketCreateStandalone
 
+# remived validation here as it is done in add_ticket_to_queue as check is like below 10 caoacity exceeded
 
 def create_ticket(db: Session, data: TicketCreateStandalone) -> Ticket:
     if data.queue_id:
