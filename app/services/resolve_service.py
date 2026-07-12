@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.models import Ticket
 
-
+EFFORT_BLOCKS = sorted(
+    settings.STANDARD_EFFORT_BLOCKS,
+    reverse=True
+)
 def resolve(db: Session, ticket_id: str, effort_logged: int) -> dict:
     ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
     if not ticket:
@@ -37,17 +40,17 @@ def overtime_breakdown(overtime: int) -> dict:
     # Instead of returning an empty breakdown,
     # raise an error indicating invalid overtime.
     # or we can add 1 in the STANDARD_EFFORT_BLOCKS to allow overtime of 1,2,3,4 but that is not a good idea as it will break the logic of the system. So we will raise an error instead.
-    if overtime < min(settings.STANDARD_EFFORT_BLOCKS):
+    if overtime < min(EFFORT_BLOCKS):
         raise ValueError("invalid_overtime")
 
-    blocks = sorted(settings.STANDARD_EFFORT_BLOCKS, reverse=True)
-    result: dict[str, int] = {}
+    #blocks = sorted(settings.STANDARD_EFFORT_BLOCKS, reverse=True) --> as sorting for every request it takes O(n)*O(n log n) time complexity removing this replacing out removes the repeated sorting
+    result= {}
     remaining = overtime
-    for b in blocks:
+    for block in EFFORT_BLOCKS:
         if remaining <= 0:
             break
-        count = remaining // b
+        count = remaining // block
         if count > 0:
-            result[str(b)] = count
-            remaining -= count * b
+            result[str(block)] = count
+            remaining -= count * block
     return {"overtime": overtime, "blocks": result}
