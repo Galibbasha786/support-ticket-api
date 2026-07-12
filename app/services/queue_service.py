@@ -35,7 +35,7 @@ def delete_queue(db: Session, queue_id: str) -> None:
     db.commit()
 
 
-def get_full_view(db: Session) -> list[QueueFullView]:
+"""def get_full_view(db: Session) -> list[QueueFullView]:
     queues = db.query(Queue).all()
     result = []
     for queue in queues:
@@ -57,4 +57,37 @@ def get_full_view(db: Session) -> list[QueueFullView]:
                 tickets=tickets,
             )
         )
+    return result """ #N+1 Query problem, we can use eager loading to solve this issue. We can use the selectinload option to load the tickets for each queue in a single query. Here's how we can modify the get_full_view function to use eager loading:
+def get_full_view(db: Session) -> list[QueueFullView]:
+
+    # Prevent N+1 queries by eagerly loading tickets
+    queues = (
+        db.query(Queue)
+        .options(selectinload(Queue.tickets))
+        .all()
+    )
+
+    result = []
+
+    for queue in queues:
+
+        tickets = [
+            QueueFullViewTicket(
+                id=t.id,
+                title=t.title,
+                complexity=t.complexity,
+                quantity=t.quantity,
+            )
+            for t in queue.tickets
+        ]
+
+        result.append(
+            QueueFullView(
+                id=queue.id,
+                name=queue.name,
+                capacity=queue.capacity,
+                tickets=tickets,
+            )
+        )
+
     return result
