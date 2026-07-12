@@ -99,5 +99,16 @@ def resolve_ticket(data: ResolveRequest, db: Session = Depends(get_db)):
 
 @router.get("/resolve/overtime-breakdown", response_model=OvertimeBreakdownResponse)
 def overtime_breakdown(overtime: int = Query(..., ge=0)):
-    result = resolve_service.overtime_breakdown(overtime)
-    return OvertimeBreakdownResponse(**result)
+    try:
+        result = resolve_service.overtime_breakdown(overtime)
+        return OvertimeBreakdownResponse(**result)
+
+    except ValueError as e:
+
+        if e.args[0] == "invalid_overtime":
+            raise HTTPException(
+                status_code=400,
+                detail="Minimum overtime must be at least 5 units."
+            )
+
+        raise
